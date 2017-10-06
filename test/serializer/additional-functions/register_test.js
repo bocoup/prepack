@@ -12,9 +12,9 @@ function func2() {
   return global.y;
 }
 
-if (global.__registerAdditionalFunction) {
-  __registerAdditionalFunction(func1);
-  __registerAdditionalFunction(func2);
+if (global.__registerAdditionalFunctionToPrepack) {
+  __registerAdditionalFunctionToPrepack(func1);
+  __registerAdditionalFunctionToPrepack(func2);
 }
 
 inspect = function() {
