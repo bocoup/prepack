@@ -35,6 +35,8 @@ const EOL = os.EOL;
 const numCPUs = os.cpus().length;
 require("source-map-support").install();
 
+const skipList = yaml.safeLoad(fs.readFileSync(path.join(__dirname, '../test/test262-filters.yml'), 'utf8'));
+
 type HarnessMap = { [key: string]: string };
 type TestRecord = { test: TestFileInfo, result: TestResult[] };
 type GroupsMap = { [key: string]: TestRecord[] };
@@ -786,13 +788,7 @@ function handleTest(
     } else {
       invariant(testFileContents, "testFileContents should not be null if banners are not None");
       // filter out by flags, features, and includes
-      let keepThisTest =
-        filterFeatures(banners) &&
-        filterFlags(banners) &&
-        filterIncludes(banners) &&
-        filterDescription(banners) &&
-        filterCircleCI(banners) &&
-        filterSneakyGenerators(banners, testFileContents);
+      let keepThisTest = filterTest(banners) && filterDescription(banners);
       let testResults = [];
       if (keepThisTest) {
         // now run the test
@@ -1062,61 +1058,11 @@ function testFilterByMetadata(test: TestFileInfo): boolean {
   // emacs!
   if (test.location.includes("~")) return false;
 
-  // SIMD isn't in JS yet
-  if (test.location.includes("Simd")) return false;
-
-  // temporarily disable intl402 tests (ES5)
-  if (test.location.includes("intl402") && !test.location.includes("/Date/prototype/to")) {
-    return false;
-  }
-
-  // temporarily disable tests which use realm.
-  if (test.location.includes("realm")) return false;
-
-  // temporarily disable tests which use with. (??)
-  if (test.location.includes("/with/")) return false;
-
-  // disable tests which use Atomics
-  if (test.location.includes("/Atomics/")) return false;
-
-  // disable tests which use generators
-  if (test.location.includes("/generators/")) return false;
-  if (test.location.includes("/yield/")) return false;
-
-  // disable tests which use modules
-  if (test.location.includes("/module-code/")) return false;
-
-  // disable browser specific tests
-  if (test.location.includes("/annexB/")) return false;
-
-  // disable tail-call optimization tests
-  if (test.location.includes("tco")) return false;
-
-  // disable nasty unicode tests.
-  if (test.location.includes("U180") || test.location.includes("u180") || test.location.includes("mongolian"))
-    return false;
-
-  // disable function toString tests.
-  if (test.location.includes("Function/prototype/toString")) return false;
-
-  // disable tests that check for detached-buffer-after-toindex
-  if (test.location.includes("detached-buffer-after-toindex")) return false;
-
-  // disable tests to check for detatched-buffer during iteration
-  if (test.location.includes("detach-typedarray-in-progress.js")) return false;
-
-  // disable broken RegExp tests
-  if (test.location.includes("RegExp/S15.10.2.12_A1_T1.js")) return false;
-  if (test.location.includes("RegExp/S15.10.2.12_A2_T1.js")) return false;
-  if (test.location.includes("RegExp/prototype/Symbol.search/lastindex-no-restore")) return false;
-  if (test.location.includes("RegExp/prototype/exec/failure-lastindex-no-access.js")) return false;
-  if (test.location.includes("RegExp/prototype/exec/success-lastindex-no-access.js")) return false;
-
-  // disable RegExp tests that use extended unicode
-  if (test.location.includes("Symbol.match/builtin-success-u-return-val-groups")) return false;
-
-  // disable SharedArrayBuffer tests
-  if (test.location.includes("sharedarraybuffer") || test.location.includes("SharedArrayBuffer")) return false;
+  // Filter out known locations
+  let foundLocationFilter = skipList.location.some(
+    location => test.location.includes(location)
+  );
+  if (foundLocationFilter) return false;
 
   return true;
 }
@@ -1132,75 +1078,46 @@ function testFilterByContents(test: TestFileInfo, testFileContents: string): boo
   let end_of_comment = testFileContents.indexOf("---*/");
   if (phase_early > 0 && phase_early < end_of_comment) return false;
 
-  let esid_pending = testFileContents.indexOf("esid: pending");
-  if (esid_pending > 0 && esid_pending < end_of_comment) return false;
-
-  // disable tests that require parser to throw SyntaxError in strict Mode
-  if (test.location.includes("/directive-prologue/") && testFileContents.includes("assert.throws(SyntaxError,"))
-    return false;
-
-  // disable SharedArrayBuffer tests
-  if (testFileContents.includes("SharedArrayBuffer")) return false;
-
   return true;
 }
 
-function filterFlags(data: BannerData): boolean {
-  return !data.flags.includes("async");
-}
+function filterTest(data: BannerData): boolean {
+  let found = false;
 
-function filterFeatures(data: BannerData): boolean {
-  let features = data.features;
-  if (features.includes("default-parameters")) return false;
-  if (features.includes("generators")) return false;
-  if (features.includes("generator")) return false;
+  found = skipList.features.some(
+    feature => data.features && data.features.includes(feature)
+  );
+  if (found) return false;
+
+  found = skipList.flags.some(
+    flag => data.flags && data.flags.includes(flag)
+  );
+  if (found) return false;
+
+  found = skipList.esid.some(
+    value => data.esid && (data.esid === value)
+  );
+  if (found) return false;
+
+  found = skipList.es6id.some(
+    value => data.es6id && (data.es6id === value)
+  );
+  if (found) return false;
+
+  found = skipList.es5id.some(
+    value => data.es5id && (data.es5id === value)
+  );
+  if (found) return false;
+
+  // Those without any filter found should be valid.
   return true;
-}
-
-function filterIncludes(data: BannerData): boolean {
-  // disable tail call optimization tests.
-  return !data.includes.includes("tco-helper.js");
 }
 
 function filterDescription(data: BannerData): boolean {
-  // For now, "Complex tests" is used in the description of some
-  // encode/decodeURI tests to indicate that they are long running.
-  // Filter these
   return (
-    !data.description.includes("Complex tests") &&
     !data.description.includes("iterating") &&
     !data.description.includes("iterable")
   );
-}
-
-function filterCircleCI(data: BannerData): boolean {
-  let skipTests = [
-    "7.8.5_A1.4_T2",
-    "7.8.5_A2.4_T2",
-    "7.8.5_A2.1_T2",
-    "7.8.5_A1.1_T2",
-    "15.1.2.2_A8",
-    "15.1.2.3_A6",
-    "7.4_A5",
-    "7.4_A6",
-    "15.10.2.12_A3_T1",
-    "15.10.2.12_A4_T1",
-    "15.10.2.12_A5_T1",
-    "15.10.2.12_A6_T1",
-  ];
-  let skipTests6 = ["22.1.3.1_3"];
-
-  return !!process.env.NIGHTLY_BUILD || (skipTests.indexOf(data.es5id) < 0 && skipTests6.indexOf(data.es6id) < 0);
-}
-
-function filterSneakyGenerators(data: BannerData, testFileContents: string) {
-  // There are some sneaky tests that use generators but are not labeled with
-  // the "generators" or "generator" feature tag. Here we use a simple heuristic
-  // to filter out tests with sneaky generators.
-  if (data.features.includes("destructuring-binding")) {
-    return !testFileContents.includes("function*") && !testFileContents.includes("*method");
-  }
-  return true;
 }
 
 /**
